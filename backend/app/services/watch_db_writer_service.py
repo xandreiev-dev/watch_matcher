@@ -148,6 +148,9 @@ class WatchDbWriterService:
         if pd.isna(value) or value is None:
             return None
 
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return int(value)
+
         digits = re.sub(r"[^\d]", "", str(value))
         if not digits:
             return None
@@ -219,6 +222,17 @@ class WatchDbWriterService:
         return text[:40]
 
     @classmethod
+    def normalize_is_global(cls, value: object) -> str:
+        if is_missing_value(value):
+            return "N"
+
+        text = str(value).strip().lower()
+        if text in {"y", "yes", "true", "1", "да", "global", "глобальная", "глобальный"}:
+            return "Y"
+
+        return "N"
+
+    @classmethod
     def prepare_matched_rows(cls, df_res: pd.DataFrame) -> pd.DataFrame:
         df = df_res.copy()
         start_count = len(df)
@@ -272,14 +286,20 @@ class WatchDbWriterService:
         else:
             df["color"] = None
 
-        df["is_global"] = "N"
+        if "is_global" in df.columns:
+            df["is_global"] = df["is_global"].apply(cls.normalize_is_global)
+        else:
+            df["is_global"] = "N"
 
         if "currency" in df.columns:
             df["currency"] = df["currency"].fillna("RUB")
         else:
             df["currency"] = "RUB"
 
-        df["tax_price"] = None
+        if "tax_price" in df.columns:
+            df["tax_price"] = pd.to_numeric(df["tax_price"], errors="coerce")
+        else:
+            df["tax_price"] = None
         df["ali_affiliate_url"] = None
 
         df = df[df["brand"].notna() & (df["brand"] != "")]

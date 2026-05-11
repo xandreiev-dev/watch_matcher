@@ -1,6 +1,7 @@
 from datetime import date
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+import pandas as pd
 
 from app.core.constants import EXTRACTION_PREVIEW_ROWS_COUNT
 from app.services.excel_service import ExcelService
@@ -12,8 +13,62 @@ from app.services.unmatched_postprocess_service import UnmatchedPostprocessServi
 from app.schemas.watch_features import WatchFeatures
 from app.services.export_preview import WatchPreviewExporter
 from app.services.watch_db_writer_service import WatchDbWriterService
+from app.core.logging_config import get_logger
 
 router = APIRouter()
+logger = get_logger("process")
+
+SHOP_ID_BY_SOURCE = {
+    "ozon": 1,
+    "avito": 2,
+}
+
+
+def first_present(row: dict, *keys: str):
+    for key in keys:
+        value = row.get(key)
+        if value is None:
+            continue
+        text = str(value).strip()
+        if not text or text.lower() in {"nan", "none", "<na>", "nat"}:
+            continue
+        return value
+    return None
+
+
+def normalize_source(value: str | None) -> str | None:
+    if value is None:
+        return None
+
+    normalized = str(value).strip().lower()
+    if normalized in {"ozon", "ozon.ru", "1"}:
+        return "ozon"
+    if normalized in {"avito", "avito.ru", "2"}:
+        return "avito"
+    return None
+
+
+def resolve_source_and_shop_id(
+    source_name: str,
+    dataframe,
+    source_raw: str | None,
+    shop_id_raw: int | None,
+) -> tuple[str, int]:
+    if shop_id_raw in {1, 2}:
+        source = "ozon" if shop_id_raw == 1 else "avito"
+        return source, shop_id_raw
+
+    explicit_source = normalize_source(source_raw)
+    if explicit_source:
+        return explicit_source, SHOP_ID_BY_SOURCE[explicit_source]
+
+    name = (source_name or "").strip().lower()
+    columns = {str(column).strip().lower() for column in dataframe.columns}
+
+    if "ozon" in name or "source_brand" in columns or "tax_price" in columns:
+        return "ozon", SHOP_ID_BY_SOURCE["ozon"]
+
+    return "avito", SHOP_ID_BY_SOURCE["avito"]
 
 
 def build_display_model(
@@ -46,8 +101,9 @@ def process_watch_row(
     row: dict,
     models_catalog: list[dict],
     variants_catalog: list[dict],
+    source: str = "avito",
 ) -> dict:
-    preprocessed = WatchPreprocessService.preprocess_row(row)
+    preprocessed = WatchPreprocessService.preprocess_row(row, source=source)
 
     features = WatchFeatureExtractor.extract(
         title=preprocessed.product_name,
@@ -147,9 +203,16 @@ def process_watch_row(
         "match_method": match_result.match_method,
         "confidence": match_result.confidence,
         "needs_manual_review": match_result.needs_manual_review,
-        "rating": row.get("Звезды"),
-        "review": row.get("Отзывы"),
-        "days_to_delivery": row.get("Доставка"),
+        "rating": first_present(row, "Звезды", "rating"),
+        "review": first_present(row, "reviews_count", "Отзывы", "review"),
+        "days_to_delivery": (
+            first_present(row, "delivery_days", "delivery_date", "Доставка")
+            if source == "ozon"
+            else first_present(row, "Доставка", "delivery_days")
+        ),
+        "is_global": first_present(row, "is_global"),
+        "tax_price": first_present(row, "tax_price"),
+        "source": source,
         "display_model": display_model,
     }
 
@@ -170,9 +233,9 @@ def build_process_logs(result: list[dict], resolved_is_new: bool) -> None:
     matched = sum(1 for row in result if row.get("match_status") == "matched")
     unmatched = total - matched
 
-    print(
-        f"[PIPELINE] total={total} | matched={matched} | "
-        f"unmatched={unmatched} | type={'NEW' if resolved_is_new else 'USED'}"
+    logger.info(
+        f"[ПАЙПЛАЙН] всего={total} | совпало={matched} | "
+        f"без_совпадений={unmatched} | тип={'НОВЫЕ' if resolved_is_new else 'БУ'}"
     )
 
 def resolve_is_new(
@@ -208,10 +271,19 @@ async def process_preview(
     file: UploadFile | None = File(None),
     file_url: str | None = Form(""),
     is_new: str | None = Form(None),
+    source: str | None = Form(None),
+    shop_id: int | None = Form(None),
 ):
     try:
+        logger.info("Запущена предпросмотрная обработка файла")
         dataframe, source_name = await get_dataframe_from_input(file, file_url)
         resolved_is_new = resolve_is_new(source_name, is_new)
+        resolved_source, resolved_shop_id = resolve_source_and_shop_id(
+            source_name,
+            dataframe,
+            source,
+            shop_id,
+        )
 
         ExcelService.validate_columns(dataframe)
 
@@ -224,26 +296,33 @@ async def process_preview(
         result = []
         for _, row in preview_df.iterrows():
             row_dict = row.to_dict()
-            result.append(process_watch_row(row_dict, models_catalog, variants_catalog))
+            result.append(process_watch_row(row_dict, models_catalog, variants_catalog, source=resolved_source))
 
         build_process_logs(result, resolved_is_new)
+        logger.info(f"[SOURCE] source={resolved_source} shop_id={resolved_shop_id}")
 
         output_file = WatchPreviewExporter.export(
             result,
             is_new=resolved_is_new,
+            source=resolved_source,
+            shop_id=resolved_shop_id,
         )
 
         return {
             "filename": source_name,
             "is_new": resolved_is_new,
+            "source": resolved_source,
+            "shop_id": resolved_shop_id,
             "preview_file": output_file,
             "preview": result,
             "stats": build_stats(result),
         }
 
     except ValueError as exc:
+        logger.warning(f"Ошибка валидации при предпросмотре: {exc}")
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:
+        logger.exception(f"Сбой предпросмотрной обработки: {exc}")
         raise HTTPException(
             status_code=500,
             detail=f"Processing failed: {str(exc)}",
@@ -255,11 +334,20 @@ async def process_file(
     file: UploadFile | None = File(None),
     file_url: str | None = Form(""),
     is_new: str | None = Form(None),
+    source: str | None = Form(None),
+    shop_id: int | None = Form(None),
     write_to_db: bool = Form(True),
 ):
     try:
+        logger.info("Запущена полная обработка файла")
         dataframe, source_name = await get_dataframe_from_input(file, file_url)
         resolved_is_new = resolve_is_new(source_name, is_new)
+        resolved_source, resolved_shop_id = resolve_source_and_shop_id(
+            source_name,
+            dataframe,
+            source,
+            shop_id,
+        )
 
         ExcelService.validate_columns(dataframe)
 
@@ -272,22 +360,24 @@ async def process_file(
         result = []
         for _, row in processed_df.iterrows():
             row_dict = row.to_dict()
-            result.append(process_watch_row(row_dict, models_catalog, variants_catalog))
+            result.append(process_watch_row(row_dict, models_catalog, variants_catalog, source=resolved_source))
 
         build_process_logs(result, resolved_is_new)
+        logger.info(f"[SOURCE] source={resolved_source} shop_id={resolved_shop_id}")
 
         output_file = WatchPreviewExporter.export(
             result,
             is_new=resolved_is_new,
+            source=resolved_source,
+            shop_id=resolved_shop_id,
         )
 
         if write_to_db:
             import time
-            import pandas as pd
 
             start_time = time.time()
-            print(
-                f"[DB] Start writing to DB | is_new={resolved_is_new} | rows={len(result)}"
+            logger.info(
+                f"[БД] Начало записи | тип={'НОВЫЕ' if resolved_is_new else 'БУ'} | строк={len(result)}"
             )
 
             result_df = pd.DataFrame(result)
@@ -295,18 +385,20 @@ async def process_file(
             WatchDbWriterService.prepare_and_write_watch_data_to_db(
                 df_res=result_df,
                 actual_date=date.today(),
-                shop_id=2,
+                shop_id=resolved_shop_id,
                 is_new=resolved_is_new,
             )
 
             duration = round(time.time() - start_time, 2)
-            print(
-                f"[DB] Finished | is_new={resolved_is_new} | rows={len(result)} | time={duration}s"
+            logger.info(
+                f"[БД] Запись завершена | тип={'НОВЫЕ' if resolved_is_new else 'БУ'} | строк={len(result)} | время={duration}с"
             )
 
         return {
             "filename": source_name,
             "is_new": resolved_is_new,
+            "source": resolved_source,
+            "shop_id": resolved_shop_id,
             "output_file": output_file,
             "db_written": write_to_db,
             "stats": build_stats(result),
@@ -314,8 +406,10 @@ async def process_file(
         }
 
     except ValueError as exc:
+        logger.warning(f"Ошибка валидации при полной обработке: {exc}")
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:
+        logger.exception(f"Сбой полной обработки: {exc}")
         raise HTTPException(
             status_code=500,
             detail=f"Processing failed: {str(exc)}",
@@ -352,15 +446,19 @@ async def get_dataframe_from_input(file: UploadFile | None, file_url: str | None
 
         dataframe = await ExcelService.read_excel_file(file)
         source_name = file.filename
+        logger.info(f"Входные данные загружены из файла: {source_name}")
         return dataframe, source_name
 
     try:
         dataframe = ExcelService.read_excel_from_url(file_url)
         source_name = file_url
+        logger.info(f"Входные данные загружены по URL: {source_name}")
         return dataframe, source_name
     except ValueError as exc:
+        logger.warning(f"Ошибка валидации при загрузке по URL: {exc}")
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:
+        logger.exception(f"Не удалось загрузить файл по URL: {exc}")
         raise HTTPException(
             status_code=500,
             detail=f"Failed to load file from URL: {str(exc)}",

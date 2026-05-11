@@ -1,0 +1,14 @@
+# Backend (FastAPI + pandas). Use Python 3.10–3.12 (wheels for pydantic-core & pandas).
+# Python 3.14+ may lack wheels and require MSVC/Rust to build native deps.
+fastapi==0.115.6
+uvicorn[standard]==0.32.1
+pydantic==2.10.3
+pandas==2.2.3
+openpyxl==3.1.5
+python-dotenv==1.0.1
+pymysql==1.1.1
+sshtunnel==0.4.0
+paramiko>=2.12.0,<3.0.0
+requests==2.32.3
+python-multipart==0.0.20
+loguru

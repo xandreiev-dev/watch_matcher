@@ -37,7 +37,6 @@ class SamsungParser:
         r"\b40\s*[,/]\s*44\s*mm\b",
         r"\b42\s*[,/]\s*46\s*mm\b",
         r"\b43\s*[,/]\s*47\s*mm\b",
-        r"\b(wifi|lte|cellular).*(wifi|lte|cellular)\b",
     ]
 
     @classmethod
@@ -127,6 +126,13 @@ class SamsungParser:
         # Если в тексте явно несколько поколений
         generations = re.findall(r"\bwatch\s*(\d{1,2})\b", text)
         if len(set(generations)) > 1:
+            return True
+
+        connectivity = {
+            "lte" if value == "cellular" else value
+            for value in re.findall(r"\b(wifi|lte|cellular)\b", text)
+        }
+        if len(connectivity) > 1:
             return True
 
         return False

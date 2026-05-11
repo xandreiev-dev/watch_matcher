@@ -10,6 +10,41 @@ ACCESSORY_KEYWORDS = {
     "ремешок", "ремень", "браслет", "strap", "band", "loop", "case", "glass", "стекло", "чехол"
 }
 
+OZON_SOFT_ACCESSORY_KEYWORDS = {"strap", "band", "loop", "case", "ремешок", "ремень", "браслет"}
+STRONG_ACCESSORY_KEYWORDS = {"glass", "стекло", "чехол", "кабель", "зарядка", "charger", "dock"}
+OZON_EXPLICIT_ACCESSORY_PATTERNS = [
+    r"\b(?:защитн\w*\s+)?(?:glass|стекло)\s+(?:для|for)\b",
+    r"\b(?:case|чехол)\s+(?:для|for)\b",
+    r"\b(?:strap|band|loop|ремешок|ремень|браслет)\s+(?:для|for)\b",
+    r"\b(?:кабель|charger|dock)\b",
+    r"\bзарядн\w*\s+(?:устройство|кабель|станц\w*)\b",
+]
+
+WATCH_MODEL_PATTERNS = [
+    r"\bapple watch\b",
+    r"\bwatch\s*(?:series\s*\d+|se\s*\d*|ultra)\b",
+    r"\bwatch\s*s?\s*\d{1,2}\b",
+    r"\bwatchs\d{1,2}\b",
+    r"\bapple\b.*\b(?:series\s*\d+|se\s*\d*|ultra)\b",
+    r"\bapple\b.*\bs\s*\d{1,2}\b",
+    r"\bseries\s+\d+\b",
+    r"\bgalaxy watch\b",
+    r"\bpixel watch\b",
+    r"\boneplus watch\b",
+    r"\bhuawei watch\b",
+    r"\bhonor watch\b",
+    r"\bamazfit\b",
+    r"\bgarmin\b",
+    r"\bforerunner\b",
+    r"\bfenix\b",
+    r"\bvenu\b",
+    r"\binstinct\b",
+    r"\bepix\b",
+    r"\bvivoactive\b",
+    r"\bсмарт\s*часы\b",
+    r"\bумные\s*часы\b",
+]
+
 
 COMMON_BRANDS = [
     ("Amazfit", ["amazfit"]),
@@ -29,29 +64,33 @@ COMMON_BRANDS = [
 
 class WatchPreprocessService:
     @classmethod
-    def preprocess_row(cls, row: dict) -> WatchPreprocessedRow:
-        product_name = str(row.get("Название") or row.get("product_name") or "")
-        description = str(row.get("Описание") or row.get("description") or "")
-        product_url = str(row.get("URL") or row.get("product_url") or "")
-        image_url = row.get("Изображения") or row.get("image_url")
-        shop_rating = row.get("Рейтинг продавца") or row.get("shop_rating")
-        price = row.get("Цена") or row.get("price")
+    def preprocess_row(cls, row: dict, source: str = "avito") -> WatchPreprocessedRow:
+        product_name = str(cls.first_present(row, "Название", "product_name", "title / product name") or "")
+        description = str(cls.first_present(row, "Описание", "description") or "")
+        product_url = str(cls.first_present(row, "URL", "product_url") or "")
+        image_url = cls.first_present(row, "Изображения", "image_url")
+        shop_rating = cls.first_present(row, "Рейтинг продавца", "shop_rating", "Звезды")
+        price = cls.first_present(row, "Цена", "price", "Discount Price", "Price")
 
         normalized_title = WatchTitleNormalizer.normalize(product_name)
 
         # Бренд определяется ОДИН раз и дальше не меняется
-        brand = cls.extract_brand_once(product_name)
+        brand = cls.first_present(row, "brand", "source_brand", "Бренд") or cls.extract_brand_once(product_name)
+        brand = str(brand).strip() if brand else "Unknown"
 
         # brand_from_url оставляем только как справочную диагностику,
         # но он НЕ влияет на brand
         brand_from_url = cls.extract_brand_from_url_for_debug(product_url)
         brand_match = cls.compare_brands(brand, brand_from_url)
 
-        article = ExtractionService.extract_article(product_url)
+        article_value = cls.first_present(row, "Article", "article") or ExtractionService.extract_article(product_url)
+        article = str(article_value).strip() if article_value is not None else None
         all_sizes = SizeExtractor.extract_all_sizes_mm(product_name)
         size_mm = SizeExtractor.extract_first_size_mm(product_name)
+        if size_mm is None:
+            size_mm = SizeExtractor.extract_first_size_mm(str(cls.first_present(row, "size") or ""))
 
-        is_accessory = any(word in normalized_title for word in ACCESSORY_KEYWORDS)
+        is_accessory = cls.is_accessory(product_name, source=source)
         is_multi_model = len(all_sizes) > 1
 
         return WatchPreprocessedRow(
@@ -71,6 +110,35 @@ class WatchPreprocessService:
             is_multi_model=is_multi_model,
             all_sizes_mm=all_sizes,
         )
+
+    @classmethod
+    def first_present(cls, row: dict, *keys: str):
+        for key in keys:
+            value = row.get(key)
+            if value is None:
+                continue
+            text = str(value).strip()
+            if not text or text.lower() in {"nan", "none", "<na>", "nat"}:
+                continue
+            return value
+        return None
+
+    @classmethod
+    def is_accessory(cls, title: str, source: str = "avito") -> bool:
+        normalized_title = WatchTitleNormalizer.normalize(title)
+
+        if source != "ozon":
+            return any(word in normalized_title for word in ACCESSORY_KEYWORDS)
+
+        has_watch_model = any(re.search(pattern, normalized_title) for pattern in WATCH_MODEL_PATTERNS)
+        has_explicit_accessory = any(re.search(pattern, normalized_title) for pattern in OZON_EXPLICIT_ACCESSORY_PATTERNS)
+        has_soft_keyword = any(word in normalized_title for word in OZON_SOFT_ACCESSORY_KEYWORDS)
+        has_strong_keyword = any(word in normalized_title for word in STRONG_ACCESSORY_KEYWORDS)
+
+        if has_watch_model and not has_explicit_accessory:
+            return False
+
+        return has_explicit_accessory or has_soft_keyword or has_strong_keyword
 
     @classmethod
     def extract_brand_once(cls, title: str) -> str:

@@ -62,6 +62,8 @@ class WatchReferenceCatalog:
                     "case_size_mm": row.get("case_size_mm"),
                     "case_material": row.get("case_material"),
                     "connectivity_type": row.get("connectivity_type"),
+                    "case_material_key": row.get("case_material_key"),
+                    "connectivity_key": row.get("connectivity_key"),
                     "family": parsed_model.get("family"),
                     "generation": parsed_model.get("generation"),
                     "model_variant": parsed_model.get("variant"),

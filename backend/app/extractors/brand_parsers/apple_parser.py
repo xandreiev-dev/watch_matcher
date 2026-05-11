@@ -143,8 +143,8 @@ class AppleParser:
         if re.search(r"\bs\d{1,2}\b", text):
             return "Series"
 
-        # apple watch 11
-        if re.search(r"\bwatch\s+\d{1,2}\b", text):
+        # apple watch 11 / watchs11
+        if re.search(r"\bwatch\s*s?\s*\d{1,2}\b", text):
             return "Series"
 
         return None
@@ -175,7 +175,7 @@ class AppleParser:
             if match:
                 return match.group(1)
 
-            match = re.search(r"\bwatch\s+(\d{1,2})\b", text)
+            match = re.search(r"\bwatch\s*s?\s*(\d{1,2})\b", text)
             if match:
                 return match.group(1)
 
