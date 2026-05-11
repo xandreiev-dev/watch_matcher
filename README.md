@@ -1,214 +1,274 @@
 # Watch Matcher — Smartwatch Data Pipeline
 
-Сервис для обработки объявлений о смарт-часах (Avito), сопоставления моделей с эталонным каталогом и записи данных в базу для дальнейшей аналитики.
+Сервис для обработки XLSX-файлов с объявлениями по смарт-часам, сопоставления моделей с эталонным каталогом и записи данных в MySQL для дальнейшей аналитики.
+
+Поддерживаемые источники:
+
+- **Avito** — `shop_id=2`
+- **Ozon** — `shop_id=1`
+
+Avito-flow остается базовым и не меняется. Ozon обрабатывается source-aware: отдельный `shop_id`, свои поля `tax_price`, `is_global`, `delivery_days` и более мягкая логика определения аксессуаров.
 
 ---
 
 ## Архитектура
 
-Проект состоит из:
-
-- **Backend (FastAPI)** — обработка данных и запись в БД
-- **Frontend (Vue)** — UI для загрузки файлов и просмотра результатов
-- **MySQL** — хранение нормализованных данных
+- **Backend (FastAPI)** — обработка XLSX, matcher, экспорт и запись в БД
+- **Frontend (Vue/Vite)** — UI для загрузки файлов
+- **MySQL** — каталог моделей, объявления и история цен
+- **FTP ingest service** — фоновый импорт Avito-файлов с FTP
 
 ---
 
-## Pipeline обработки
+## Pipeline Обработки
 
-1. Загрузка XLSX (файл или URL)
-2. Предобработка данных:
-   - очистка текста
-   - нормализация
-   - извлечение цены, бренда, размера
-3. Извлечение признаков:
+1. Загрузка XLSX через файл или URL.
+2. Определение источника:
+   - `Ozon_watch_*.xlsx` или Ozon-колонки -> `source=ozon`, `shop_id=1`
+   - Avito-файлы -> `source=avito`, `shop_id=2`
+3. Предобработка:
+   - нормализация title/description
+   - извлечение бренда, размера, article, URL, цены
+   - source-aware accessory detection
+4. Извлечение признаков:
    - family / generation / variant
-   - color / warranty / connectivity
-4. Сопоставление модели:
-   - strict match
-   - signature match
-   - fallback (редкий/ограниченный)
-5. Постобработка unmatched
+   - color / warranty / material / connectivity
+5. Сопоставление модели с каталогом:
+   - strict model/variant match
+   - strict model match без variant
+   - controlled fallback
 6. Экспорт результата:
    - `avito_watch_YYYY-MM-DD_new.xlsx`
    - `avito_watch_YYYY-MM-DD_old.xlsx`
-7. Запись в БД:
-   - g_watch
-   - g_shop_watch
-   - g_watch_price
+   - `ozon_watch_YYYY-MM-DD_new.xlsx`
+7. Подготовка и запись в БД:
+   - `g_watch`
+   - `g_shop_watch`
+   - `g_watch_price`
 
 ---
 
-## Подход к сопоставлению
+## Ozon Импорт
 
-Используется **сигнатурный (deterministic) подход**
+Ozon XLSX может содержать дополнительные поля:
 
-### Сигнатура модели:
+- `Article`
+- `product_url`
+- `shop_rating`
+- `reviews_count`
+- `delivery_days`
+- `is_global`
+- `tax_price`
+- `Discount Price`
+- `source_brand`
 
-(brand, family, generation, variant)
+Что сохраняется:
 
-### Пример:
+- `Article` используется как основной article, если колонка есть
+- `Discount Price` используется как итоговая цена
+- `tax_price` сохраняется в `g_watch_price.tax_price`
+- `is_global` нормализуется в формат БД `Y/N`
+- `delivery_days` сохраняется как `days_to_delivery`
+- `shop_id=1`
 
-Samsung Galaxy Watch 6 Classic → ("samsung", "watch", "6", "classic")
-
----
-
-## Стратегия match
-
-1. Exact match (нормализованные строки)
-2. Signature match (brand + family + generation + variant)
-3. Fallback (ограниченный, без риска ложных совпадений)
-
----
-
-## Принципы
-
-- разные поколения не смешиваются
-- Pro ≠ базовая версия
-- аксессуары не матчатся
-- приоритет: точность > количество
+Для Ozon accessory-логика мягче, чем для Avito: реальные часы не отбрасываются только из-за слов `band`, `loop`, `case`, `strap`, `стекло`, `ремешок`, если в названии явно есть модель часов.
 
 ---
 
-## Работа с БД
+## Avito Импорт
 
-### Основные таблицы:
+Avito остается совместимым с текущим pipeline:
 
-- `g_watch` — уникальные модели
-- `g_shop_watch` — объявления
-- `g_watch_price` — цены (история)
-- `g_watch_variant` — размеры/варианты
-- `g_watch_variant_source` — источник варианта
-
----
-
-### Особенность
-
-Модели хранятся **без пробелов**:
-
-Galaxy Watch 6 → galaxywatch6
-
-это ускоряет JOIN и позволяет делать быстрые запросы
+- `shop_id=2`
+- экспорт в `avito_watch_YYYY-MM-DD_new/old.xlsx`
+- FTP ingest для new/old файлов
+- текущие правила matcher и записи в БД сохранены
 
 ---
 
-## Производительность
+## Работа С БД
 
-Аналитический запрос:
+Основные таблицы записи:
 
-- собирает цены по всем моделям за последние 5 дней
-- выполняется **< 1 секунды**
-- агрегирует тысячи записей
+- `g_watch` — уникальная нормализованная модель
+- `g_shop_watch` — карточка товара/объявления у магазина
+- `g_watch_price` — история цен
 
----
+Таблицы каталога/сопоставления:
 
-## Контроль качества данных
+- `g_watch_model` — эталонные модели
+- `g_watch_variant` — размеры/варианты моделей
 
-Реализована проверка:
-
-- сопоставление моделей ↔ вариантов
-- наличие размеров
-- контроль пропущенных записей (`missing_rows`)
+`prepare_matched_rows()` пишет в БД только строки с `match_status=matched`, валидным `article`, `URL`, `price`, брендом и моделью.
 
 ---
 
-## Логи pipeline
+## Гарантия
 
-Пример:
+Гарантия записывается только если явно указан срок:
 
-[PIPELINE] total=5540 | matched=4579 | unmatched=961 | type=USED
-[EXPORT] file=avito_watch_2026-04-22_old.xlsx
-[DB] start | rows=5540 | type=USED
-[DB] inserted=4579
-[DB] done | time=3.55s
+- `Гарантия 12 мес` -> `360`
+- `Гарантия 14 дней` -> `14`
+- `Гарантия 1 год` -> `365`
+
+Если есть только слово `гарантия/warranty` без срока, в БД пишется `NULL`. Fallback `1`, `0` или строковые значения не используются.
 
 ---
 
 ## API
 
-### POST /api/process
+### `POST /api/process`
 
-Обработка файла + запись в БД
+Полная обработка XLSX.
 
 Параметры:
-- `file` — XLSX
-- `file_url` — ссылка
-- `is_new` — тип (new/used)
-- `write_to_db` — запись в БД
+
+- `file` — XLSX-файл
+- `file_url` — ссылка на XLSX
+- `is_new` — `true/new` или `false/old/used`
+- `source` — опционально: `avito` или `ozon`
+- `shop_id` — опционально: `1` или `2`
+- `write_to_db` — `true/false`
+
+Безопасный прогон Ozon без записи в БД:
+
+```cmd
+curl.exe -X POST http://127.0.0.1:4444/api/process -F "file=@C:\work\ozon_watch_parser\brand_exports\Ozon_watch_ru_2026-05-08.xlsx" -F "source=ozon" -F "is_new=true" -F "write_to_db=false"
+```
+
+### `POST /api/process/preview`
+
+Предпросмотр по первым строкам без записи в БД.
+
+### `GET /api/watch-catalog/resolve`
+
+Точный поиск модели и варианта в `g_watch_model` / `g_watch_variant`.
+
+Пример:
+
+```text
+/api/watch-catalog/resolve?brand=Apple&model=Watch Series 6&size_mm=44
+```
+
+Если вариантов несколько и не хватает `material/connectivity`, endpoint возвращает `ambiguous`, а не случайную запись.
+
+### `GET /api/watch-catalog/diagnostics/variants`
+
+Диагностика качества `g_watch_variant`:
+
+- модели без вариантов
+- дубли вариантов
+- ambiguous size-группы
+- подозрительные пустые варианты
+
+Данные не изменяются, endpoint только читает каталог.
 
 ---
 
-### POST /api/process/preview
-
-Только предпросмотр (без записи)
-
----
-
-## Установка
+## Запуск
 
 ### Backend
 
+```bash
 cd backend
 pip install -r requirements.txt
-uvicorn app.main:app --reload
+python -m uvicorn app.main:app --reload --port 4444
+```
 
 Swagger:
 
-[http://127.0.0.1:8000/docs]
-
----
+```text
+http://127.0.0.1:4444/docs
+```
 
 ### Frontend
 
+```bash
 cd frontend
 npm install
 npm run dev
-
-## Интерфейс
-
-- загрузка XLSX
-- обработка по ссылке
-- отображение:
-  - matched / unmatched
-- статистика
-- изображения товаров
+```
 
 ---
 
-## Выходные файлы
+## FTP Ingest Service
 
-Автоматически создаются:
+Фоновая служба для Avito new/old файлов:
 
-avito_watch_YYYY-MM-DD_new.xlsx
-avito_watch_YYYY-MM-DD_old.xlsx
+```bash
+cd backend
+python scripts/run_ftp_watch_ingest_service.py
+```
 
-##  Ограничения
+Разовый прогон:
 
-- качество зависит от входных данных
-- редкие модели могут отсутствовать в каталоге
-- извлечение некоторых полей эвристическое
+```bash
+cd backend
+python scripts/run_ftp_watch_ingest_service.py --once
+```
+
+Основные переменные окружения:
+
+- `FTP_HOST`
+- `FTP_USER`
+- `FTP_PASS`
+- `FTP_PORT`
+- `FTP_REMOTE_DIR`
+- `FTP_LOCAL_DOWNLOAD_DIR`
+- `FTP_CHECK_MINUTE`
+- `IS_DEBUG`
+
+`IS_DEBUG=true` включает один отладочный прогон с повторной обработкой актуального файла и перезаписью строк за дату файла через существующий UPSERT.
 
 ---
 
-## Статус проекта
+## Логи Pipeline
 
-Полный pipeline реализован  
-Запись в БД работает полностью корректно
-Быстрые аналитические запросы  
-Минимальные потери данных  
-Готов к продакшну  
+Пример:
+
+```text
+[ПАЙПЛАЙН] всего=10258 | совпало=8633 | без_совпадений=1625 | тип=НОВЫЕ
+[SOURCE] source=ozon shop_id=1
+[БД] prepare_matched_rows funnel: start=10258 -> match_status=8633 -> ... -> article_in_url=8633
+```
 
 ---
 
-## Итог
+## Выходные Файлы
 
-Проект реализует полноценную систему:
+Файлы сохраняются в `backend/output/`:
 
-- извлечение данных
-- нормализация
-- сопоставление моделей
-- хранение
-- аналитика
+- `avito_watch_YYYY-MM-DD_new.xlsx`
+- `avito_watch_YYYY-MM-DD_old.xlsx`
+- `ozon_watch_YYYY-MM-DD_new.xlsx`
 
-С фокусом на:
-точность, предсказуемость и производительность
+Папка `backend/output/` и XLSX-файлы исключены из git.
+
+---
+
+## Git Safety
+
+В репозиторий не должны попадать:
+
+- `.env`, `.env.*`
+- `*.xlsx`, `*.xls`
+- `*.log`
+- `backend/output/`
+- `node_modules/`
+- `__pycache__/`, `*.pyc`
+
+---
+
+## Статус
+
+Реализован полный pipeline:
+
+- Avito import
+- Ozon import
+- source-aware export
+- matcher моделей/вариантов
+- подготовка строк к БД
+- запись в `g_watch`, `g_shop_watch`, `g_watch_price`
+- диагностические endpoints каталога
+
+Фокус проекта: точность, предсказуемость и безопасная запись в БД.
