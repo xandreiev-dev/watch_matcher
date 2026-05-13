@@ -194,7 +194,7 @@ class SamsungParser:
                     generation = watch_compact_match.group(1)
 
         # ---- VARIANTS ----
-        if re.search(r"\bultra\b", text):
+        if re.search(r"\bultra(?:\b|\d)", text):
             variants.append("Ultra")
 
         if re.search(r"\bclassic\b", text):
@@ -286,10 +286,15 @@ class SamsungParser:
                 candidates.append(f"watch {generation} {variant.lower()}")
                 candidates.append(f"watch{generation} {variant.lower()}")
 
-                candidates.append(f"galaxy watch {generation}")
-                candidates.append(f"galaxy watch{generation}")
-                candidates.append(f"watch {generation}")
-                candidates.append(f"watch{generation}")
+                if "Ultra" in variant:
+                    # Ultra must not silently degrade to a regular Galaxy Watch generation.
+                    candidates.append("galaxy watch ultra")
+                    candidates.append("watch ultra")
+                else:
+                    candidates.append(f"galaxy watch {generation}")
+                    candidates.append(f"galaxy watch{generation}")
+                    candidates.append(f"watch {generation}")
+                    candidates.append(f"watch{generation}")
 
             if not generation and not variant:
                 candidates.append("galaxy watch")
