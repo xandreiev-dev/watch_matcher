@@ -82,7 +82,7 @@ class MotorolaParser:
         cleaned = cleaned.replace("(", " ")
         cleaned = cleaned.replace(")", " ")
 
-        # motowatch -> moto watch
+        # MotoWatch часто пишут одним словом.
         cleaned = re.sub(r"\bmotowatch\b", "moto watch", cleaned)
 
         for noise in cls.NOISE_WORDS:
@@ -129,7 +129,7 @@ class MotorolaParser:
                 "variant": variant,
             }
 
-        # Просто Moto Watch
+        # Если деталей нет, оставляем базовый Moto Watch.
         if re.search(r"\bwatch\b", text):
             family = "Watch"
 

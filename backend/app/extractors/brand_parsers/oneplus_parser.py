@@ -83,7 +83,7 @@ class OnePlusParser:
         cleaned = cleaned.replace("(", " ")
         cleaned = cleaned.replace(")", " ")
 
-        # watch2r -> watch 2r
+        # OnePlus часто клеит Watch2R без пробела.
         cleaned = re.sub(r"\bwatch(\d+r)\b", r"watch \1", cleaned)
         cleaned = re.sub(r"\bwatch(\d+)\b", r"watch \1", cleaned)
 

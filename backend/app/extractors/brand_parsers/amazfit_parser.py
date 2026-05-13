@@ -101,7 +101,7 @@ class AmazfitParser:
         # gtr3 -> gtr 3, gts2 -> gts 2, bip3 -> bip 3
         cleaned = re.sub(r"\b(gtr|gts|bip|pop|active|balance|falcon|cheetah|stratos|verge)(\d+)\b", r"\1 \2", cleaned)
 
-        # t rex compact normalization
+        # T-Rex часто приезжает слитно, приводим к одному виду.
         cleaned = re.sub(r"\bt[\s\-]*rex\b", "t rex", cleaned)
 
         for noise in cls.NOISE_WORDS:

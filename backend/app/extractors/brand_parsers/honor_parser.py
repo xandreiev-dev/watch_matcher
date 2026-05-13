@@ -82,10 +82,10 @@ class HonorParser:
         cleaned = cleaned.replace("(", " ")
         cleaned = cleaned.replace(")", " ")
 
-        # magicwatch -> magic watch
+        # Иногда MagicWatch пишут слитно.
         cleaned = re.sub(r"\bmagicwatch\b", "magic watch", cleaned)
 
-        # x5i / 2i / 5pro -> with space
+        # Разделяем хвосты типа X5i и 5Pro, чтобы кандидат совпал с каталогом.
         cleaned = re.sub(r"\bx(\d+)(i)\b", r"x \1\2", cleaned)
         cleaned = re.sub(r"\b(\d+)(i)\b", r"\1\2", cleaned)
         cleaned = re.sub(r"\b(\d+)(pro|ultra)\b", r"\1 \2", cleaned)

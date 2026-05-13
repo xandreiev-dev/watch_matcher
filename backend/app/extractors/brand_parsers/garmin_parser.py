@@ -216,7 +216,7 @@ class GarminParser:
                 return m.group(1).upper()
 
         if family == "fenix":
-            # fenix e
+            # Отдельный короткий кейс для Fenix E.
             if re.search(r"\bfenix\s+e\b", text):
                 return "E"
 
@@ -349,7 +349,7 @@ class GarminParser:
         if family == "marq":
             if generation:
                 candidates.append(f"marq {generation.lower()}")
-                # fallback без gen
+                # Если поколение не вытащили, пробуем общий вариант.
                 gen_less = re.sub(r"\s+gen\s+\d+", "", generation.lower())
                 if gen_less != generation.lower():
                     candidates.append(f"marq {gen_less}")

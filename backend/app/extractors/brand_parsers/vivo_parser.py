@@ -202,10 +202,10 @@ class VivoParser:
                 candidates.append(f"watch {generation} {int(size_mm)}mm")
             candidates.append(f"watch {generation}")
 
-        # fallback
+        # Если точного кандидата нет, оставляем более общий.
         candidates.append("watch")
 
-        # clean
+        # Убираем пустые и дублирующиеся варианты.
         result = []
         seen = set()
 

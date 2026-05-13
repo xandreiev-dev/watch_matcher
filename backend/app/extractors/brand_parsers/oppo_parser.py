@@ -84,7 +84,7 @@ class OppoParser:
         cleaned = cleaned.replace("(", " ")
         cleaned = cleaned.replace(")", " ")
 
-        # watchx2 -> watch x2
+        # Ozon/Avito иногда клеят WatchX2 без пробела.
         cleaned = re.sub(r"\bwatchx(\d+)\b", r"watch x\1", cleaned)
         cleaned = re.sub(r"\bwatch(\d+)\b", r"watch \1", cleaned)
 
@@ -154,7 +154,7 @@ class OppoParser:
             if re.search(r"\bpro\b", text):
                 found_variants.append("Pro")
 
-        # Просто Watch
+        # Если линейку не уточнили, оставляем базовый Watch.
         elif re.search(r"\bwatch\b", text):
             family = "Watch"
 

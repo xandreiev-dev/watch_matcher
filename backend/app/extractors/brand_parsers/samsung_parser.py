@@ -143,7 +143,7 @@ class SamsungParser:
         generation = None
         variants: list[str] = []
 
-        # ---- FAMILY + GENERATION ----
+        # Сначала вытаскиваем линейку и поколение.
         # Fit3 / Fit 3
         fit_match = re.search(r"\bfit\s*(\d{1,2})\b", text)
         if fit_match:
@@ -193,7 +193,7 @@ class SamsungParser:
                 if watch_compact_match:
                     generation = watch_compact_match.group(1)
 
-        # ---- VARIANTS ----
+        # Потом добираем Ultra/Classic/FE и похожие хвосты.
         if re.search(r"\bultra(?:\b|\d)", text):
             variants.append("Ultra")
 
@@ -287,7 +287,7 @@ class SamsungParser:
                 candidates.append(f"watch{generation} {variant.lower()}")
 
                 if "Ultra" in variant:
-                    # Ultra must not silently degrade to a regular Galaxy Watch generation.
+                    # Ultra не отдаем в обычный Watch 7/8: лучше общий Galaxy Watch Ultra или ручная проверка.
                     candidates.append("galaxy watch ultra")
                     candidates.append("watch ultra")
                 else:

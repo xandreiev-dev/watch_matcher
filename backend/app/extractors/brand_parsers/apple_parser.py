@@ -143,7 +143,7 @@ class AppleParser:
         if re.search(r"\bs\d{1,2}\b", text):
             return "Series"
 
-        # apple watch 11 / watchs11
+        # У Ozon встречается WatchS11 без пробела.
         if re.search(r"\bwatch\s*s?\s*\d{1,2}\b", text):
             return "Series"
 

@@ -266,7 +266,7 @@ class XiaomiParser:
 
             candidates.append("redmi watch")
 
-        # Xiaomi Watch base line
+        # Если деталей нет, оставляем общий Xiaomi Watch.
         elif family == "Watch":
             if generation and variant:
                 if size_mm:
