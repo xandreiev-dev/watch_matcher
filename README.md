@@ -86,6 +86,39 @@ Avito остается совместимым с текущим pipeline:
 
 ---
 
+## Import Layer Для Scheduler
+
+Для почасового запуска не нужно поднимать отдельный новый matcher. Поверх текущего pipeline добавлен тонкий import-layer: он находит XLSX, скачивает файл, запускает уже существующие нормализацию/matching/db-ready шаги и при необходимости пишет результат в БД.
+
+Основные функции для внешнего scheduler-а:
+
+```python
+from app.importers import process_avito_watch_data, process_ozon_watch_data
+
+process_avito_watch_data(dry_run=False, force=False)
+process_ozon_watch_data(dry_run=False, force=False)
+```
+
+CLI для ручной проверки:
+
+```bash
+cd backend
+python main_import.py --shop avito --dry-run
+python main_import.py --shop ozon --dry-run
+python main_import.py --shop all --dry-run
+```
+
+`dry-run` прогоняет matcher и сохраняет output/debug XLSX, но не пишет данные в БД. Debug-файлы создаются в `tmp/`:
+
+- `avito_watch_ready_YYYY-MM-DD_new/old.xlsx`
+- `avito_watch_failed_YYYY-MM-DD_new/old.xlsx`
+- `ozon_watch_ready_YYYY-MM-DD_new.xlsx`
+- `ozon_watch_failed_YYYY-MM-DD_new.xlsx`
+
+Защита от повторного импорта сделана через `watch_import_log`: один и тот же файл не импортируется повторно по `file_hash`, если не передан `force=True`.
+
+---
+
 ## Работа С БД
 
 Основные таблицы записи:
